@@ -1,198 +1,210 @@
 
+def read_version():
+    with open('metadata.txt', 'r') as file:
+        return file.read().strip()
+version = read_version()
+
 import gradio as gr
-import os
-import subprocess
 
-import os
-import shutil
-import subprocess
-import uuid
-from PIL import Image
-
-def create_directory_structure(master_folder):
-    print("Creating directory structure...")
-    assets_folder = os.path.join(master_folder, "Assets")
-    working_folder = os.path.join(master_folder, "Working")
-    final_renders_folder = os.path.join(master_folder, "Final Renders")
-
-    os.makedirs(assets_folder, exist_ok=True)
-    os.makedirs(working_folder, exist_ok=True)
-    os.makedirs(final_renders_folder, exist_ok=True)
-
-    input_video_folder = os.path.join(assets_folder, "input_video")
-    keys_original_folder = os.path.join(assets_folder, "keys-original")
-    keys_aged_folder = os.path.join(assets_folder, "keys-aged")
-    video_frames_folder = os.path.join(assets_folder, "video_frames")
-
-    os.makedirs(input_video_folder, exist_ok=True)
-    os.makedirs(keys_original_folder, exist_ok=True)
-    os.makedirs(keys_aged_folder, exist_ok=True)
-    os.makedirs(video_frames_folder, exist_ok=True)
-
-    return input_video_folder, keys_original_folder, keys_aged_folder, video_frames_folder
-
-def process_video(input_video, output_folder):
-    print("Processing input video...")
-    # Make video square
-    command = [
-        "ffmpeg",
-        "-i", input_video,
-        "-vf", "crop=min(iw\,ih):min(iw\,ih)",
-        "-c:a", "copy",
-        os.path.join(output_folder, "processed_video.mp4")
-    ]
-    subprocess.run(command, check=True)
-
-def extract_frames_from_video(video_path, output_folder):
-    print("Extracting frames from video...")
-    command = [
-        "ffmpeg",
-        "-i", video_path,
-        os.path.join(output_folder, "image%04d.jpg")
-    ]
-    subprocess.run(command, check=True)
-
-def select_and_copy_keyframes(video_frames_folder, keys_original_folder):
-    print("Selecting and copying keyframes...")
-    frame_files = sorted(os.listdir(video_frames_folder))
-    total_frames = len(frame_files)
-    
-    if total_frames < 4:
-        print("Error: The video is too short to extract 4 frames.")
-        sys.exit(1)
-
-    # Choose the first, last, and two equidistant frames
-    keyframe_indices = [0, total_frames // 3, (2 * total_frames) // 3, total_frames - 1]
-
-    for idx in keyframe_indices:
-        frame_file = frame_files[idx]
-        shutil.copy(os.path.join(video_frames_folder, frame_file), keys_original_folder)
-    print("Keyframes selected and copied.")
-
-def create_tiled_image(keys_original_folder, master_id):
-    print("Creating tiled image from keyframes...")
-    images = [Image.open(os.path.join(keys_original_folder, img)) for img in sorted(os.listdir(keys_original_folder))]
-    
-    # Determine the dimensions for the final image
-    img_width, img_height = images[0].size
-    total_width = img_width * 2
-    total_height = img_height * 2
-
-    # Create an empty image with the determined dimensions
-    tiled_image = Image.new("RGB", (total_width, total_height))
-
-    # Place each image in the tiled image
-    for i in range(2):
-        for j in range(2):
-            tiled_image.paste(images[i*2 + j], (img_width*j, img_height*i))
-
-    # Save the tiled image
-    tiled_image_path = os.path.join(keys_original_folder, f"{master_id}-tiled-original.jpg")
-    tiled_image.save(tiled_image_path)
-
-    # Create a 1024x1024 version
-    small_tiled = tiled_image.resize((1024, 1024))
-    small_tiled_path = os.path.join(keys_original_folder, f"{master_id}-tiled-original-small.jpg")
-    small_tiled.save(small_tiled_path)
-    print("Tiled images created.")
-
-def main(input_video_path):
-    master_id = str(uuid.uuid4())
-    input_video_folder, keys_original_folder, keys_aged_folder, video_frames_folder = create_directory_structure(master_id)
-
-    shutil.copy(input_video_path, input_video_folder)
-    processed_video = os.path.join(input_video_folder, "processed_video.mp4")
-    process_video(input_video_path, input_video_folder)
-    extract_frames_from_video(processed_video, video_frames_folder)
-
-    select_and_copy_keyframes(video_frames_folder, keys_original_folder)
-    create_tiled_image(keys_original_folder, master_id)
-
-    print(f"Processing complete. Check the master folder: {master_id}")
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python preprocess_video.py <path_to_input_video>")
-        sys.exit(1)
-    
-    input_video_path = sys.argv[1]
-    main(input_video_path)
-
-import os
-from PIL import Image
-
-def split_tiled_image(master_folder, master_id):
-    print("Splitting tiled image into individual frames...")
-    
-    assets_folder = os.path.join(master_folder, "Assets")
-    keys_aged_folder = os.path.join(assets_folder, "keys-aged")
-    keys_original_folder = os.path.join(assets_folder, "keys-original")
-    
-    # Find the tiled aged image
-    for img in os.listdir(keys_aged_folder):
-        if f"{master_id}-tiled-aged" in img:
-            tiled_aged_image_path = os.path.join(keys_aged_folder, img)
-            break
-    else:
-        print(f"No tiled aged image found in {keys_aged_folder}. Exiting.")
-        return
-
-    # Load the tiled aged image
-    tiled_aged_image = Image.open(tiled_aged_image_path)
-    img_width, img_height = tiled_aged_image.size
-
-    # Filter the filenames of individual frames from keys-original
-    original_frame_names = [name for name in sorted(os.listdir(keys_original_folder)) if name.startswith('image') and name.endswith('.jpg')]
-
-    # Split the image into individual frames
-    frame_width = img_width // 2
-    frame_height = img_height // 2
-
-    for i in range(2):
-        for j in range(2):
-            left = j * frame_width
-            upper = i * frame_height
-            right = left + frame_width
-            lower = upper + frame_height
-
-            frame_image = tiled_aged_image.crop((left, upper, right, lower))
-
-            frame_image_path = os.path.join(keys_aged_folder, original_frame_names[i*2 + j])
-            frame_image.save(frame_image_path)
-
-    print("Tiled image split into individual frames.")
-
-def main(master_folder):
-    master_id = os.path.basename(master_folder)
-    split_tiled_image(master_folder, master_id)
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python split_tiled_image.py <path_to_master_folder>")
-        sys.exit(1)
-    
-    master_folder_path = sys.argv[1]
-    main(master_folder_path)
-
+from ebsynth_utility import ebsynth_utility_process
+from modules import script_callbacks
+from modules.call_queue import wrap_gradio_gpu_call
 
 def on_ui_tabs():
-    with gr.Blocks(analytics_enabled=False) as face_aging_interface:
+
+    with gr.Blocks(analytics_enabled=False) as ebs_interface:
         with gr.Row().style(equal_height=False):
             with gr.Column(variant='panel'):
-                gr.Textbox(label='Welcome to Face Aging Plugin', lines=3)
-                gr.HTML(value="<p style='margin-bottom: 1.2em'>This plugin automates the aging of faces using Stable Diffusion.</p>")
-                
-                # GUI for preprocess_video_square.py
-                gr.File(label="Select Source Video", type="video/mp4", name="video_file")
-                gr.Textbox(label="Master Folder Path (for preprocessing)", name="master_folder_preprocess")
-                gr.Button(label="Execute Preprocessing", action=preprocess_video)
-                
-                # GUI for split_aged_tiled_image_square.py
-                gr.Textbox(label="Master Folder Path (for split image)", name="master_folder_split")
-                gr.Button(label="Execute Image Splitting", action=split_tiled_image)
 
-    return (face_aging_interface, "Face Aging", "face_aging_interface"),
+                with gr.Row():
+                    with gr.Tabs(elem_id="ebs_settings"):
+                        with gr.TabItem('project setting', elem_id='ebs_project_setting'):
+                            project_dir = gr.Textbox(label='Project directory', lines=1)
+                            original_movie_path = gr.Textbox(label='Original Movie Path', lines=1)
+
+                            org_video = gr.Video(interactive=True, mirror_webcam=False)
+                            def fn_upload_org_video(video):
+                                return video
+                            org_video.upload(fn_upload_org_video, org_video, original_movie_path)
+                            gr.HTML(value="<p style='margin-bottom: 1.2em'>\
+                                    If you have trouble entering the video path manually, you can also use drag and drop.For large videos, please enter the path manually. \
+                                    </p>")
+
+                        
+                        with gr.TabItem('Preprocess Video', elem_id='preprocess_video_tab'):
+                            input_video_path = gr.Textbox(label='Input Video Path', lines=1)
+                            btn_preprocess = gr.Button(label='Run Preprocess', action=script_callbacks.preprocess_video_square)
+
+                        with gr.TabItem('Split Aged Image', elem_id='split_aged_image_tab'):
+                            master_folder = gr.Textbox(label='Master Folder', lines=1)
+                            master_id = gr.Textbox(label='Master ID', lines=1)
+                            btn_split_aged = gr.Button(label='Run Split Aged Image', action=script_callbacks.split_aged_tiled_image_square)
+with gr.TabItem('configuration', elem_id='ebs_configuration'):
+                            with gr.Tabs(elem_id="ebs_configuration_tab"):
+                                with gr.TabItem(label="stage 1",elem_id='ebs_configuration_tab1'):
+                                    with gr.Row():
+                                        frame_width = gr.Number(value=-1, label="Frame Width", precision=0, interactive=True)
+                                        frame_height = gr.Number(value=-1, label="Frame Height", precision=0, interactive=True)
+                                    gr.HTML(value="<p style='margin-bottom: 1.2em'>\
+                                            -1 means that it is calculated automatically. If both are -1, the size will be the same as the source size. \
+                                            </p>")
+
+                                    st1_masking_method_index = gr.Radio(label='Masking Method', choices=["transparent-background","clipseg","transparent-background AND clipseg"], value="transparent-background", type="index")
+
+                                    with gr.Accordion(label="transparent-background options"):
+                                        st1_mask_threshold = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Mask Threshold', value=0.0)
+
+                                        # https://pypi.org/project/transparent-background/
+                                        gr.HTML(value="<p style='margin-bottom: 0.7em'>\
+                                                configuration for \
+                                                <font color=\"blue\"><a href=\"https://pypi.org/project/transparent-background\">[transparent-background]</a></font>\
+                                                </p>")
+                                        tb_use_fast_mode = gr.Checkbox(label="Use Fast Mode(It will be faster, but the quality of the mask will be lower.)", value=False)
+                                        tb_use_jit = gr.Checkbox(label="Use Jit", value=False)
+
+                                    with gr.Accordion(label="clipseg options"):
+                                        clipseg_mask_prompt = gr.Textbox(label='Mask Target (e.g., girl, cats)', lines=1)
+                                        clipseg_exclude_prompt = gr.Textbox(label='Exclude Target (e.g., finger, book)', lines=1)
+                                        clipseg_mask_threshold = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Mask Threshold', value=0.4)
+                                        clipseg_mask_blur_size = gr.Slider(minimum=0, maximum=150, step=1, label='Mask Blur Kernel Size(MedianBlur)', value=11)
+                                        clipseg_mask_blur_size2 = gr.Slider(minimum=0, maximum=150, step=1, label='Mask Blur Kernel Size(GaussianBlur)', value=11)
+
+                                with gr.TabItem(label="stage 2", elem_id='ebs_configuration_tab2'):
+                                    key_min_gap = gr.Slider(minimum=0, maximum=500, step=1, label='Minimum keyframe gap', value=10)
+                                    key_max_gap = gr.Slider(minimum=0, maximum=1000, step=1, label='Maximum keyframe gap', value=300)
+                                    key_th = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, label='Threshold of delta frame edge', value=8.5)
+                                    key_add_last_frame = gr.Checkbox(label="Add last frame to keyframes", value=True)
+
+                                with gr.TabItem(label="stage 3.5", elem_id='ebs_configuration_tab3_5'):
+                                    gr.HTML(value="<p style='margin-bottom: 0.7em'>\
+                                            <font color=\"blue\"><a href=\"https://github.com/hahnec/color-matcher\">[color-matcher]</a></font>\
+                                            </p>")
+                                    
+                                    color_matcher_method = gr.Radio(label='Color Transfer Method', choices=['default', 'hm', 'reinhard', 'mvgd', 'mkl', 'hm-mvgd-hm', 'hm-mkl-hm'], value="hm-mkl-hm", type="value")
+                                    color_matcher_ref_type = gr.Radio(label='Color Matcher Ref Image Type', choices=['original video frame', 'first frame of img2img result'], value="original video frame", type="index")
+                                    gr.HTML(value="<p style='margin-bottom: 0.7em'>\
+                                            <font color=\"red\">If an image is specified below, it will be used with highest priority.</font>\
+                                            </p>")
+                                    color_matcher_ref_image = gr.Image(label="Color Matcher Ref Image", source='upload', mirror_webcam=False, type='pil')
+                                    st3_5_use_mask = gr.Checkbox(label="Apply mask to the result", value=True)
+                                    st3_5_use_mask_ref = gr.Checkbox(label="Apply mask to the Ref Image", value=False)
+                                    st3_5_use_mask_org = gr.Checkbox(label="Apply mask to original image", value=False)
+                                    #st3_5_number_of_itr = gr.Slider(minimum=1, maximum=10, step=1, label='Number of iterations', value=1)
+
+                                with gr.TabItem(label="stage 7", elem_id='ebs_configuration_tab7'):
+                                    blend_rate = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Crossfade blend rate', value=1.0)
+                                    export_type = gr.Dropdown(choices=["mp4","webm","gif","rawvideo"], value="mp4" ,label="Export type")
+
+                                with gr.TabItem(label="stage 8", elem_id='ebs_configuration_tab8'):
+                                    bg_src = gr.Textbox(label='Background source(mp4 or directory containing images)', lines=1)
+                                    bg_type = gr.Dropdown(choices=["Fit video length","Loop"], value="Fit video length" ,label="Background type")
+                                    mask_blur_size = gr.Slider(minimum=0, maximum=150, step=1, label='Mask Blur Kernel Size', value=5)
+                                    mask_threshold = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Mask Threshold', value=0.0)
+                                    #is_transparent = gr.Checkbox(label="Is Transparent", value=True, visible = False)
+                                    fg_transparency = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Foreground Transparency', value=0.0)
+
+                                with gr.TabItem(label="etc", elem_id='ebs_configuration_tab_etc'):
+                                    mask_mode = gr.Dropdown(choices=["Normal","Invert","None"], value="Normal" ,label="Mask Mode")
+                        with gr.TabItem('info', elem_id='ebs_info'):
+                            gr.HTML(value="<p style='margin-bottom: 0.7em'>\
+                                                The process of creating a video can be divided into the following stages.<br>\
+                                                (Stage 3, 4, and 6 only show a guide and do nothing actual processing.)<br><br>\
+                                                <b>stage 1</b> <br>\
+                                                    Extract frames from the original video. <br>\
+                                                    Generate a mask image. <br><br>\
+                                                <b>stage 2</b> <br>\
+                                                    Select keyframes to be given to ebsynth.<br><br>\
+                                                <b>stage 3</b> <br>\
+                                                    img2img keyframes.<br><br>\
+                                                <b>stage 3.5</b> <br>\
+                                                    (this is optional. Perform color correction on the img2img results and expect flickering to decrease. Or, you can simply change the color tone from the generated result.)<br><br>\
+                                                <b>stage 4</b> <br>\
+                                                    and upscale to the size of the original video.<br><br>\
+                                                <b>stage 5</b> <br>\
+                                                    Rename keyframes.<br>\
+                                                    Generate .ebs file.(ebsynth project file)<br><br>\
+                                                <b>stage 6</b> <br>\
+                                                    Running ebsynth.(on your self)<br>\
+                                                    Open the generated .ebs under project directory and press [Run All] button. <br>\
+                                                    If ""out-*"" directory already exists in the Project directory, delete it manually before executing.<br>\
+                                                    If multiple .ebs files are generated, run them all.<br><br>\
+                                                <b>stage 7</b> <br>\
+                                                    Concatenate each frame while crossfading.<br>\
+                                                    Composite audio files extracted from the original video onto the concatenated video.<br><br>\
+                                                <b>stage 8</b> <br>\
+                                                    This is an extra stage.<br>\
+                                                    You can put any image or images or video you like in the background.<br>\
+                                                    You can specify in this field -> [Ebsynth Utility]->[configuration]->[stage 8]->[Background source]<br>\
+                                                    If you have already created a background video in Invert Mask Mode([Ebsynth Utility]->[configuration]->[etc]->[Mask Mode]),<br>\
+                                                    You can specify \"path_to_project_dir/inv/crossfade_tmp\".<br>\
+                                                </p>")
+
+                    with gr.Column(variant='panel'):
+                        with gr.Column(scale=1):
+                            with gr.Row():
+                                stage_index = gr.Radio(label='Process Stage', choices=["stage 1","stage 2","stage 3","stage 3.5","stage 4","stage 5","stage 6","stage 7","stage 8"], value="stage 1", type="index", elem_id='ebs_stages')
+                            
+                            with gr.Row():
+                                generate_btn = gr.Button('Generate', elem_id="ebs_generate_btn", variant='primary')
+                            
+                            with gr.Group():
+                                debug_info = gr.HTML(elem_id="ebs_info_area", value=".")
+
+                            with gr.Column(scale=2):
+                                html_info = gr.HTML()                                                                                
+
+            ebs_args = dict(
+                fn=wrap_gradio_gpu_call(ebsynth_utility_process),
+                inputs=[
+                    stage_index,
+
+                    project_dir,
+                    original_movie_path,
+
+                    frame_width,
+                    frame_height,
+                    st1_masking_method_index,
+                    st1_mask_threshold,
+                    tb_use_fast_mode,
+                    tb_use_jit,
+                    clipseg_mask_prompt,
+                    clipseg_exclude_prompt,
+                    clipseg_mask_threshold,
+                    clipseg_mask_blur_size,
+                    clipseg_mask_blur_size2,
+
+                    key_min_gap,
+                    key_max_gap,
+                    key_th,
+                    key_add_last_frame,
+
+                    color_matcher_method,
+                    st3_5_use_mask,
+                    st3_5_use_mask_ref,
+                    st3_5_use_mask_org,
+                    color_matcher_ref_type,
+                    color_matcher_ref_image,
+
+                    blend_rate,
+                    export_type,
+
+                    bg_src,
+                    bg_type,
+                    mask_blur_size,
+                    mask_threshold,
+                    fg_transparency,
+
+                    mask_mode,
+
+                ],
+                outputs=[
+                    debug_info,
+                    html_info,
+                ],
+                show_progress=False,
+            )
+            generate_btn.click(**ebs_args)
+           
+    return (ebs_interface, "Ebsynth Utility", "ebs_interface"),
 
 script_callbacks.on_ui_tabs(on_ui_tabs)
